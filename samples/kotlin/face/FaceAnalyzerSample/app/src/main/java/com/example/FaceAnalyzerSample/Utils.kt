@@ -6,13 +6,18 @@
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
+import java.io.OutputStreamWriter
+import java.io.PrintWriter
 import java.lang.Exception
 import java.net.HttpURLConnection
 import java.nio.charset.Charset
@@ -23,6 +28,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import javax.net.ssl.HttpsURLConnection
 
 class PickImage : ActivityResultContracts.PickVisualMedia() {
     override fun createIntent(context: Context, input: PickVisualMediaRequest): Intent {
@@ -33,39 +39,72 @@ class PickImage : ActivityResultContracts.PickVisualMedia() {
 }
 
 object Utils {
+    const val CRLF = "\r\n"
+
     // Function to get a session token for face liveness session
-    fun GetFaceAPISessionToken(context: Context, isVerify: Boolean ) = runBlocking {
+    fun GetFaceAPISessionToken(context: Context, verifyImageArray: ByteArray?) = runBlocking {
         withContext(Dispatchers.IO) {
             val sharedPref = context.getSharedPreferences("SettingValues", Context.MODE_PRIVATE)
             val faceApiEndpoint = sharedPref.getString("endpoint", "").toString()
             val faceApiKey = sharedPref.getString("key", "").toString()
             val sendResultsToClient = sharedPref.getBoolean("sendResultsToClient", false)
 
-            var url: URL?
-            var urlConnection: HttpURLConnection? = null
-            if (!faceApiEndpoint.isNullOrBlank() && !faceApiKey.isNullOrBlank()) {
+            val url: URL?
+            var urlConnection: HttpsURLConnection? = null
+            if (faceApiEndpoint.isNotBlank() && faceApiKey.isNotBlank()) {
                 try {
-                    if (isVerify) {
-                        url =
-                            URL(faceApiEndpoint + "/face/v1.1-preview.1/detectLivenessWithVerify/singleModal/sessions")
+                    url = if (verifyImageArray != null) {
+                        URL("$faceApiEndpoint/face/v1.1-preview.1/detectLivenessWithVerify/singleModal/sessions")
                     } else {
-                        url =
-                            URL(faceApiEndpoint + "/face/v1.1-preview.1/detectLiveness/singleModal/sessions")
+                        URL("$faceApiEndpoint/face/v1.1-preview.1/detectLiveness/singleModal/sessions")
                     }
 
-                    urlConnection = url.openConnection() as HttpURLConnection
+                    val tokenRequest = JSONObject(mapOf(
+                        "livenessOperationMode" to "Passive",
+                        "sendResultsToClient" to sendResultsToClient,
+                        "deviceCorrelationId" to Settings.Secure.ANDROID_ID
+                    )).toString()
+                    val charset: Charset = Charset.forName("UTF-8")
+                    urlConnection = url.openConnection() as HttpsURLConnection
                     urlConnection.doOutput = true
                     urlConnection.setChunkedStreamingMode(0)
                     urlConnection.useCaches = false
-                    urlConnection.setRequestProperty("Ocp-Apim-Subscription-Key", "$faceApiKey")
-                    urlConnection.setRequestProperty("Content-Type", "application/json")
-                    val out: OutputStream = BufferedOutputStream(urlConnection.outputStream)
-                    val tokenRequest =
-                        "{\"livenessOperationMode\":\"Passive\", \"sendResultsToClient\":\"" + "$sendResultsToClient" + "\", \"deviceCorrelationId\":\"" + UUID.randomUUID()
-                            .toString() + "\"}"
-                    out.write(tokenRequest.toByteArray(Charset.forName("UTF-8")))
-                    out.flush()
-                    val reader = BufferedReader(InputStreamReader(urlConnection.inputStream))
+                    urlConnection.setRequestProperty("Ocp-Apim-Subscription-Key", faceApiKey)
+                    if (verifyImageArray == null) {
+                        urlConnection.setRequestProperty("Content-Type", "application/json; charset=$charset")
+                        val out: OutputStream = BufferedOutputStream(urlConnection.outputStream)
+                        out.write(tokenRequest.toByteArray(charset))
+                        out.flush()
+                    } else {
+                        val boundary: String = UUID.randomUUID().toString()
+                        urlConnection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+                        val outputStream = BufferedOutputStream(urlConnection.outputStream)
+
+                        PrintWriter(OutputStreamWriter(outputStream, charset), true).use { writer ->
+                            writer.append("--$boundary").append(CRLF)
+                            writer.append("Content-Type: application/json; charset=$charset").append(CRLF)
+                            writer.append("Content-Disposition: form-data; name=Parameters").append(CRLF)
+                            writer.append(CRLF).append(tokenRequest).append(CRLF)
+
+                            writer.append("--$boundary").append(CRLF)
+                            writer.append("Content-Disposition: form-data; name=VerifyImage; filename=VerifyImage").append(CRLF)
+                            writer.append("Content-Type: application/octet-stream").append(CRLF)
+                            writer.append("Content-Transfer-Encoding: binary").append(CRLF)
+                            writer.append(CRLF).flush()
+                            outputStream.write(verifyImageArray, 0, verifyImageArray.size)
+                            outputStream.flush()
+                            writer.append(CRLF).flush()
+                            writer.append(CRLF).flush()
+
+                            writer.append("--$boundary--").append(CRLF).flush()
+                            outputStream.flush()
+                        }
+                    }
+                    val (reader, throwable) = try {
+                        Pair(BufferedReader(InputStreamReader(urlConnection.inputStream)), null)
+                    } catch (t: Throwable) {
+                        Pair(BufferedReader(InputStreamReader(urlConnection.errorStream)), t)
+                    }
                     val response = StringBuilder()
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
@@ -75,18 +114,25 @@ object Utils {
 
                     // Parse the JSON response
                     val jsonResponse = response.toString()
-                    val jsonObject = org.json.JSONObject(jsonResponse)
-                    sharedPref.edit().putString("token", jsonObject.getString("authToken")).apply()
+
+                    if (throwable == null) {
+                        val jsonObject = JSONObject(jsonResponse)
+                        return@withContext jsonObject.getString("authToken")
+                    } else {
+                        Log.d("Face API Session Create", "Status: ${urlConnection.responseCode} ${urlConnection.responseMessage}")
+                        Log.d("Face API Session Create", "Body: $jsonResponse")
+                        throw throwable
+                    }
                 } catch (ex: Exception) {
                     ex.printStackTrace()
                 } finally {
                     urlConnection!!.disconnect()
                 }
             }
+            return@withContext ""
         }
     }
 
-    // Function to retrieve a string value from SharedPreferences
     fun GetVerifyImage(context: Context, uri: Uri) : String {
         val filetype = context.applicationContext.getContentResolver().getType(uri)!!.split('/')[1]
         val file: File = File(
@@ -103,5 +149,21 @@ object Utils {
         }
 
         return file.path
+    }
+
+    fun GetVerifyImageByteArray(context: Context, uri: Uri) : ByteArray {
+        try {
+            context.applicationContext.contentResolver.openInputStream(uri).use { inputStream ->
+                ByteArrayOutputStream().use { output ->
+                    inputStream!!.copyTo(output)
+                    output.flush()
+                    return output.toByteArray()
+                }
+
+            }
+        } catch (ex: IOException) {
+            ex.printStackTrace()
+            throw ex
+        }
     }
 }

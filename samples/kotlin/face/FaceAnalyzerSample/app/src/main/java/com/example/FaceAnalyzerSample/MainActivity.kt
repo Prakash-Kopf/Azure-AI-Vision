@@ -46,6 +46,8 @@ class MainActivity : AppCompatActivity() {
 
         mPickMedia = registerForActivityResult(PickImage()) { uri ->
             if (uri != null) {
+                val verifyImageByteArray = Utils.GetVerifyImageByteArray(this, uri)
+                Utils.GetFaceAPISessionToken(this, verifyImageByteArray)
                 val sharedPref = this.getSharedPreferences("SettingValues", Context.MODE_PRIVATE)
                 val faceApiEndpoint = sharedPref.getString("endpoint", "").toString()
                 val token = sharedPref.getString("token", "").toString()
@@ -81,7 +83,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun launchLiveness() {
-        Utils.GetFaceAPISessionToken(this, false)
+        Utils.GetFaceAPISessionToken(this, null)
         val sharedPref = this.getSharedPreferences("SettingValues", Context.MODE_PRIVATE)
         val faceApiEndpoint = sharedPref.getString("endpoint", "").toString()
         val token = sharedPref.getString("token", "").toString()
@@ -92,7 +94,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun launchLivenessVerify() {
-        Utils.GetFaceAPISessionToken(this, true)
         mPickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.SingleMimeType("*/*")))
     }
 

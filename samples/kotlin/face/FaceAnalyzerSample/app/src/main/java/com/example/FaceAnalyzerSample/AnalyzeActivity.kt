@@ -343,12 +343,6 @@ class AnalyzeActivity : AppCompatActivity() {
         mFaceAnalysisOptions = FaceAnalysisOptions();
 
         mFaceAnalysisOptions?.setFaceSelectionMode(FaceSelectionMode.LARGEST)
-        
-        if(!mVerifyImagePath.isNullOrBlank())
-        {
-            val singleImageVs = VisionSource.fromFile(mVerifyImagePath)
-            mFaceAnalysisOptions?.setRecognitionMode(RecognitionMode.valueOfVerifyingMatchToFaceInSingleFaceImage(singleImageVs))
-        }
 
         try {
             mFaceAnalyzer?.analyzeOnceAsync(mFaceAnalysisOptions);
