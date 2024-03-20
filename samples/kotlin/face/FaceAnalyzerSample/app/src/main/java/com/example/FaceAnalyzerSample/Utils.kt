@@ -59,7 +59,7 @@ object Utils {
                         URL("$faceApiEndpoint/face/v1.1-preview.1/detectLiveness/singleModal/sessions")
                     }
 
-                    val tokenRequest = JSONObject(mapOf(
+                    val tokenRequest = org.json.JSONObject(mapOf(
                         "livenessOperationMode" to "Passive",
                         "sendResultsToClient" to sendResultsToClient,
                         "deviceCorrelationId" to Settings.Secure.ANDROID_ID
@@ -116,8 +116,8 @@ object Utils {
                     val jsonResponse = response.toString()
 
                     if (throwable == null) {
-                        val jsonObject = JSONObject(jsonResponse)
-                        return@withContext jsonObject.getString("authToken")
+                        val jsonObject = org.json.JSONObject(jsonResponse)
+                        sharedPref.edit().putString("token", jsonObject.getString("authToken")).apply()
                     } else {
                         Log.d("Face API Session Create", "Status: ${urlConnection.responseCode} ${urlConnection.responseMessage}")
                         Log.d("Face API Session Create", "Body: $jsonResponse")
@@ -129,7 +129,6 @@ object Utils {
                     urlConnection!!.disconnect()
                 }
             }
-            return@withContext ""
         }
     }
 
