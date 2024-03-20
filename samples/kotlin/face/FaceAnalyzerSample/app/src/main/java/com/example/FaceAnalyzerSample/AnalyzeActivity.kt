@@ -13,8 +13,10 @@ import android.content.pm.PackageManager
 import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.os.Build
 import android.graphics.Color
+import android.graphics.Matrix
+import android.media.ExifInterface
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -122,18 +124,33 @@ class AnalyzeActivity : AppCompatActivity() {
             return
         }
 
-        if (!mVerifyImagePath.isNullOrBlank()) {
-            val bitmapImage = BitmapFactory.decodeFile(mVerifyImagePath)
+        val verifyImagePath = mVerifyImagePath
+        if (!verifyImagePath.isNullOrBlank()) {
+            var bitmapImage = BitmapFactory.decodeFile(verifyImagePath) ?: return
+            try {   // rotate bitmap (best effort)
+                val matrix = Matrix()
+                ExifInterface(verifyImagePath)
+                    .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+                    .let { orientation ->
+                    when (orientation) {
+                        ExifInterface.ORIENTATION_ROTATE_90  -> matrix.postRotate( 90F)
+                        ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180F)
+                        ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270F)
+                        else -> return@let
+                    }
+                    bitmapImage = Bitmap.createBitmap(bitmapImage, 0, 0, bitmapImage.width, bitmapImage.height, matrix, true)
+
+                }
+            } catch (_: Throwable) { }
             val imageSz = 100.0
-            if (bitmapImage.height < bitmapImage.width) {
+            bitmapImage = if (bitmapImage.height < bitmapImage.width) {
                 val nw = (bitmapImage.width * (imageSz / bitmapImage.height)).toInt()
-                val scaled = Bitmap.createScaledBitmap(bitmapImage, nw, imageSz.toInt(), true)
-                mImageView.setImageBitmap(scaled)
+                Bitmap.createScaledBitmap(bitmapImage, nw, imageSz.toInt(), true)
             } else {
                 val nh = (bitmapImage.height * (imageSz / bitmapImage.width)).toInt()
-                val scaled = Bitmap.createScaledBitmap(bitmapImage, imageSz.toInt(), nh, true)
-                mImageView.setImageBitmap(scaled)
+                Bitmap.createScaledBitmap(bitmapImage, imageSz.toInt(), nh, true)
             }
+            mImageView.setImageBitmap(bitmapImage)
         }
     }
 
